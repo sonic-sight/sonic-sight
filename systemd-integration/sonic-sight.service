@@ -1,0 +1,18 @@
+[Unit]
+Description=Sonic sight service
+After=network.target
+
+[Service]
+WorkingDirectory=/home/sonic/sonic-sight
+Restart=always
+RestartSec=1
+# Type=simple
+# ExecStart=/home/sonic/sonic-sight/run-with-parameters.sh
+Type=forking
+ExecStart=/usr/bin/screen -L -dmS sonic-sight /home/sonic/sonic-sight/run-with-parameters.sh
+# StandardOutput=file:/home/sonic/logs/sonic-vision.log
+StandardOutput=null
+StandardError=inherit
+
+[Install]
+WantedBy=default.target

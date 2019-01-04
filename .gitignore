@@ -1,0 +1,11 @@
+release_build
+debug_build
+\.*.swp
+/.settings
+data/
+test-data/
+scripts/sounds
+debug_vertices.dat
+.cproject
+.project
+.settings/

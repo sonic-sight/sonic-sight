@@ -1,0 +1,15 @@
+[Unit]
+Description=Hardware button menu service
+After=network.target
+
+[Service]
+WorkingDirectory=/home/sonic/sonic-sight/scripts
+Restart=always
+RestartSec=1
+Type=simple
+ExecStart=/usr/bin/python3 ./button-menu.py
+StandardOutput=null
+StandardError=inherit
+
+[Install]
+WantedBy=default.target

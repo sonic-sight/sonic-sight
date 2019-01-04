@@ -1,0 +1,21 @@
+[Unit]
+Description=Restart host networking after some delay
+After=network.target
+After=polkitd.service
+
+[Service]
+# Restart=always
+# RestartSec=1
+# Type=oneshot
+# ExecStartPre=/bin/sleep 10
+# ExecStart=-/usr/bin/nmcli con down Wlan0Host
+# ExecStart=/bin/sleep 3
+# ExecStart=/usr/bin/nmcli con up Wlan0Host
+Type=simple
+ExecStart=/home/sonic/sonic-sight/systemd-integration/network-restart.sh
+StandardOutput=null
+StandardError=inherit
+TimeoutSec=infinity
+[Install]
+WantedBy=default.target
+
