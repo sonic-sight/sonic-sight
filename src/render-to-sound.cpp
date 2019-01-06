@@ -25,6 +25,8 @@
 #include "SoundController.h"
 #include "SoundRenderer.h"
 
+#include <signal.h>
+
 // 3rd party header for writing png files
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -37,11 +39,20 @@ T get_value( argh::parser & cmdl, std::string parameter, T default_value )
 	return t_tmp;
 }
 
+std::atomic_bool CONTINUE_RUNNING(true);
+
+void stop_on_signal( int signum )
+{
+	CONTINUE_RUNNING = false;
+}
+
 enum DepthRenderingMode { DepthRenderingUnknown = 0, DepthRenderingSimple = 1, DepthRenderingDelayIsAngle = 2 };
 
 
 int main(int argc, char * argv[]) try
 {
+	signal( SIGINT, stop_on_signal );
+
 	int i_tmp;
 	float f_tmp;
 	std::stringstream ss_tmp;
@@ -69,7 +80,8 @@ int main(int argc, char * argv[]) try
 				"--renderer-lower-frequency",
 				"--renderer-lower-frequency-doubling-length",
 				"--renderer-lower-amplitude",
-				"--depth-rendering-mode"
+				"--depth-rendering-mode",
+				"--record", "--replay"
 			});
 	cmdl.parse(argc,argv);
 
@@ -78,7 +90,14 @@ int main(int argc, char * argv[]) try
 			( ( cmdl("--depth-rendering-mode").str() ) == "delay_is_angle" ) ? DepthRenderingDelayIsAngle :
 			DepthRenderingUnknown ;
 
-	if( cmdl[{"-h","--help"}] || (depth_rendering_mode == DepthRenderingUnknown) )
+	const std::string filename_record = get_value<std::string>( cmdl, "--record", "" );
+	const std::string filename_replay = get_value<std::string>( cmdl, "--replay", "" );
+	const bool is_recording = filename_record.length() > 0;
+	const bool is_replaying = filename_replay.length() > 0;
+
+	if( cmdl[{"-h","--help"}]
+			 || (depth_rendering_mode == DepthRenderingUnknown)
+			 || (is_recording && is_replaying) )
 	{
 		using namespace std;
 		cout << "Possible parameters:" << endl;
@@ -151,6 +170,11 @@ int main(int argc, char * argv[]) try
 		cout << "\t delay_is_angle: " << endl;
 		cout << "\t \t the delay between signals on L and R channels that a point in space produces" << endl;
 		cout << "\t \t corresponds to the horizontal angle at which the point is seen by the camera." << endl;
+
+		cout << "--record=<filename> : " << endl;
+		cout << "\t Record the camera frames to a bag file with specified filename." << endl;
+		cout << "--replay=<filename> : " << endl;
+		cout << "\t Play the recorded camera frames from the specified bag." << endl;
 
 		return 0;
 	}
@@ -239,10 +263,20 @@ int main(int argc, char * argv[]) try
 	rs2::config cfg;
 	std::cout << "Configuring camera stream with parameters w,h = " << camera_width << "," << camera_height;
 	std::cout << "     streaming at " << camera_fps << " frames per second" << std::endl;
+    if( is_replaying )
+    	cfg.enable_device_from_file( filename_replay, false );
+    else
+    {
     cfg.enable_stream(RS2_STREAM_DEPTH, camera_width, camera_height, RS2_FORMAT_Z16, camera_fps);
-    if( save_depth )
+    if( save_depth || is_recording )
 		cfg.enable_stream( RS2_STREAM_COLOR, camera_width, camera_height, RS2_FORMAT_RGB8, camera_fps );
+    if( is_recording )
+    	cfg.enable_record_to_file(filename_record);
+    }
+
     rs2::pipeline_profile profile = pipe.start(cfg);
+    if(is_replaying) // Pause the replay when the code is executing in order to deterministically get the same frames on every run
+		pipe.get_active_profile().get_device().as<rs2::playback>().pause();
 
     rs2::align align( RS2_STREAM_DEPTH );
 
@@ -293,15 +327,45 @@ int main(int argc, char * argv[]) try
     const std::chrono::milliseconds scan_interval(10);
     const std::chrono::milliseconds sound_interval((long int)(renderer_interval_total_time*1000));
     rs2_error *e = NULL;
-    while(true)
+    int count_frame = 0;
+    // If we stream at 6 fps and the replay sound lasts 1.5s, then we expect to hit every 9th frame
+    const int expected_frame_multiplier = (int)( 0.1 + camera_fps * param_max_distance / param_speed_of_sound );
+    // when replaying from device, we render every multiplier frame to make things deterministic
+	const std::chrono::nanoseconds recording_duration = is_replaying ?
+			pipe.get_active_profile().get_device().as<rs2::playback>().get_duration() :
+			std::chrono::nanoseconds(0);
+	const std::chrono::nanoseconds expected_time_between_frames = std::chrono::milliseconds(
+			(long int)(1000 * param_max_distance / param_speed_of_sound / camera_fps ) );
+
+    while(CONTINUE_RUNNING)
     {
+		if( is_replaying ) // resume playback
+			pipe.get_active_profile().get_device().as<rs2::playback>().resume();
+
 		rs2::frameset data = pipe.wait_for_frames();
+		if( is_replaying )
+		{
+			std::chrono::nanoseconds current_recording_time =
+					std::chrono::nanoseconds( pipe.get_active_profile().get_device().as<rs2::playback>().get_position() );
+
+			if( recording_duration - current_recording_time < expected_time_between_frames )
+				CONTINUE_RUNNING = false;
+
+			const long int frame_num = data.get_depth_frame().get_frame_number();
+            // use get_duration and get_position to check if there will be no more frames, and exit if this is the case
+			if( (frame_num == 0) || (frame_num % expected_frame_multiplier != 0) )
+				continue;
+			// pause playback in order not to skip any frames
+			pipe.get_active_profile().get_device().as<rs2::playback>().pause();
+		}
         auto time_now = std::chrono::high_resolution_clock::now();
-        if (time_now - time_last_sound < sound_interval )
+        if ( (is_replaying==false) && (time_now - time_last_sound < sound_interval) )
         {
     		std::this_thread::sleep_for(scan_interval);
     		continue;
         }
+		std::cout << "Processing depth frame # ";
+		std::cout << std::setw(10) << data.get_depth_frame().get_frame_number() << std::endl;
 
 		rs2::frame depth_frame = data.get_depth_frame();
 		if( !depth_frame )
@@ -485,6 +549,10 @@ int main(int argc, char * argv[]) try
 //			save_debug_data(sound_render_data,sound_render_n*2, "AFTER FIRST CYCLE COMPLETE");
         }
     }
+
+    if( is_replaying ) // Allow for the sound to be played to the end before exiting
+		std::this_thread::sleep_for( std::chrono::seconds( 2 ) );
+    pipe.stop();
 
     return EXIT_SUCCESS;
 }
