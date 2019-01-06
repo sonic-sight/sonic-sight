@@ -37,6 +37,8 @@ T get_value( argh::parser & cmdl, std::string parameter, T default_value )
 	return t_tmp;
 }
 
+enum DepthRenderingMode { DepthRenderingUnknown = 0, DepthRenderingSimple = 1, DepthRenderingDelayIsAngle = 2 };
+
 
 int main(int argc, char * argv[]) try
 {
@@ -66,11 +68,17 @@ int main(int argc, char * argv[]) try
 				"--renderer-lower-distance",
 				"--renderer-lower-frequency",
 				"--renderer-lower-frequency-doubling-length",
-				"--renderer-lower-amplitude"
+				"--renderer-lower-amplitude",
+				"--depth-rendering-mode"
 			});
 	cmdl.parse(argc,argv);
 
-	if( cmdl[{"-h","--help"}] )
+	const DepthRenderingMode depth_rendering_mode =
+			( ( cmdl("--depth-rendering-mode").str() ) == "simple" ) ? DepthRenderingSimple :
+			( ( cmdl("--depth-rendering-mode").str() ) == "delay_is_angle" ) ? DepthRenderingDelayIsAngle :
+			DepthRenderingUnknown ;
+
+	if( cmdl[{"-h","--help"}] || (depth_rendering_mode == DepthRenderingUnknown) )
 	{
 		using namespace std;
 		cout << "Possible parameters:" << endl;
@@ -135,8 +143,18 @@ int main(int argc, char * argv[]) try
 		cout << "--renderer-lower-amplitude=<amplitude=0.0> : " << endl;
 		cout << "\t lower signal base amplitude (added to signal) [%]" << endl;
 
+		cout << "--depth-rendering-mode={simple,delay_is_angle} : " << endl;
+		cout << "\t Depth rendering mode or the way that the depth is converted into amplitudes. " << endl;
+		cout << "\t The following modes are possible: " << endl;
+		cout << "\t simple : " << endl;
+		cout << "\t \t distances between each ear and all points are calculated and converted to amplitudes" << endl;
+		cout << "\t delay_is_angle: " << endl;
+		cout << "\t \t the delay between signals on L and R channels that a point in space produces" << endl;
+		cout << "\t \t corresponds to the horizontal angle at which the point is seen by the camera." << endl;
+
 		return 0;
 	}
+
 
 	// in etc/fstab: "tmpfs       /mnt/ramdisk tmpfs   nodev,nosuid,noexec,nodiratime,size=1024M   0 0"
 	// ram disk filename : "/mnt/ramdisk/pointcloud.dat"
@@ -310,13 +328,28 @@ int main(int argc, char * argv[]) try
         	time_last_sound = time_now;
         	std::cout << "Point size: " << points.size() << std::endl;
         	{ // Render the sound and play it
-        		sdr.RenderPointcloudToSound(
+				if( depth_rendering_mode == DepthRenderingSimple )
+				{
+					sdr.RenderPointcloudToSound(
 #if DEBUGOMP==1
         				debug_vertices_data, debug_vertices_n,
 #else
         				points.get_vertices(), points.size(),
 #endif
 						sound_render_data, sound_render_n );
+				}
+				else
+				{
+					sdr.RenderPointcloudToSoundDelayIsAngle(
+#if DEBUGOMP==1
+        				debug_vertices_data, debug_vertices_n,
+#else
+        				points.get_vertices(), points.size(),
+#endif
+						sound_render_data, sound_render_n,
+						camera_width, 0.3 // Max delay must be less than 40cm = 2*20cm (twice the camera minimal range)
+						);
+				}
 
         		// Time examples : line 195 of librealsense/wrappers/opencv/latency-tool/latency-detector.h
         		// rs2_time_t is miliseconds in double

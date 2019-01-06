@@ -7,5 +7,6 @@ test-data/
 scripts/sounds
 debug_vertices.dat
 .cproject
+.pydevproject
 .project
 .settings/

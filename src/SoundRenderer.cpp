@@ -288,8 +288,8 @@ SimpleDepthRenderer::SimpleDepthRenderer(
 	 loudness_n_per_channel(this->max_counter)
 {
 	counters = new unsigned int * [num_counters];
-	counters[0] = new unsigned int [num_counters*max_counter];
-	for( int i=1; i<num_counters; ++i )
+	counters[0] = new unsigned int [num_counters*max_counter*2];
+	for( int i=1; i<num_counters*2; ++i )
 		counters[i] = &counters[0][max_counter*i];
 	loudness_data = new float [2*loudness_n_per_channel];
 	amplitudes_data = new float [2*loudness_n_per_channel];
@@ -352,6 +352,105 @@ void SimpleDepthRenderer::RenderPointcloudToSound(
 	}
 }
 
+void SimpleDepthRenderer::RenderPointcloudToSoundDelayIsAngle(
+	const rs2::vertex * vertices, const unsigned int n_vertices,
+	audio_t sound_out[],
+	unsigned int sound_n,
+	const unsigned int camera_w,
+	const float delay_distance_at_max_angle
+	)
+{
+	int num_used_counters = 1;
+#pragma omp parallel default(shared)
+	{
+
+#if defined _OPENMP
+		unsigned int * my_counter_left = counters[omp_get_thread_num()];
+		unsigned int * my_counter_right = counters[omp_get_thread_num()+num_counters];
+#pragma omp single
+		{
+			num_used_counters = omp_get_num_threads();
+		}
+#else
+		unsigned int * my_counter_left = counters[0];
+		unsigned int * my_counter_right = counters[num_counters];
+#endif
+
+		// DO NOT OMP PARALLELIZE
+		for( int i=0; i<max_counter; ++i )
+		{
+			my_counter_left[i] = 0;
+			my_counter_right[i] = 0;
+		}
+
+#pragma omp for
+		for( int i=0; i < n_vertices; ++i )
+		{
+			const int i_width = i % camera_w;
+			const float delay_distance_fraction = 2.0*i_width/camera_w - 1.; // -1 <-> +1
+			const float this_delay_distance = delay_distance_at_max_angle * \
+					delay_distance_fraction;
+
+			rs2::vertex const & v = vertices[i];
+			if( v.z < 0.0001 )
+				continue;
+			const float dd = sqrt(v.x*v.x+v.y*v.y+v.z*v.z);
+			const unsigned int i_bin_left = ((unsigned int)((dd+this_delay_distance)/step_distance));
+			if(i_bin_left<max_counter)
+				my_counter_left[i_bin_left]++;
+			const unsigned int i_bin_right = ((unsigned int)((dd-this_delay_distance)/step_distance));
+			if(i_bin_right<max_counter)
+				my_counter_right[i_bin_right]++;
+		}
+	} // end openMP parallel region
+
+	// move all counts to counter 0
+	for( int i=1; i<num_used_counters; ++i )
+	{
+#pragma omp parallel for default(shared)
+		for( int j=0; j<max_counter; ++j )
+		{
+			counters[0][j] += counters[i][j];
+			counters[i][j] = 0;
+			counters[num_counters][j] += counters[num_counters+i][j];
+			counters[num_counters+i][j] = 0;
+		}
+	}
+
+	// Re-normalize signals so that a sample in which 25% of the points are within 10cm distance
+	// reaches (max amplitude)/10. amp_div is the avg. num of samples per interval in the described configuration
+	const unsigned int amp_div = (n_vertices / 25.0) / (0.1/step_distance) * 10;
+	// Effective max counts = audio_A * amplitude_divider / base_amplitude
+	// audio_A = amplitude_values[i] / amplitude_divider * base_amplitude + 0.5
+	SoundRenderer::RenderAmplitudesToFrequencyWithConstantTimeSteps(
+			counters[0], max_counter, amp_div, max_distance / speed_of_sound,
+			sound_out, sound_n, 0, base_frequency,
+			audio_A, // max amplitude
+			true,
+			freq_doubling_length / speed_of_sound,
+			background_amplitude,
+			save_loudness ? amplitudes_data : NULL
+			);
+	SoundRenderer::RenderAmplitudesToFrequencyWithConstantTimeSteps(
+			counters[0+num_counters], max_counter, amp_div, max_distance / speed_of_sound,
+			sound_out, sound_n, 1, base_frequency,
+			audio_A, // max amplitude
+			true,
+			freq_doubling_length / speed_of_sound,
+			background_amplitude,
+			save_loudness ? amplitudes_data : NULL
+			);
+
+	if(save_loudness )
+	{
+#pragma omp parallel for
+		for( int i=0; i<loudness_n_per_channel; ++i )
+		{
+			loudness_data[2*i+0] = ((float)counters[0][i]/amp_div) ;
+			loudness_data[2*i+1] = ((float)counters[num_counters][i]/amp_div) ;
+		}
+	}
+}
 
 void SimpleDepthRenderer::RenderDistanceToSound(
 	float x, float y, float z,

@@ -62,7 +62,16 @@ void ApplyKernelSmoothingToAmplitudes(
 /* This class converts depth to a sound sample
  * by taking into account the distances only.
  */
-class SimpleDepthRenderer
+class DepthRenderer
+{
+public:
+	virtual void RenderPointcloudToSound(
+			const rs2::vertex * vertices, const unsigned int n_vertices,
+			audio_t sound_out[],
+			unsigned int sound_n ) = 0;
+};
+
+class SimpleDepthRenderer: public DepthRenderer
 {
 public:
 	SimpleDepthRenderer(
@@ -80,10 +89,17 @@ public:
 		bool save_loudness
 			);
 	~SimpleDepthRenderer();
-	void RenderPointcloudToSound(
+	virtual void RenderPointcloudToSound(
 			const rs2::vertex * vertices, const unsigned int n_vertices,
 			audio_t sound_out[],
 			unsigned int sound_n );
+	virtual void RenderPointcloudToSoundDelayIsAngle(
+			const rs2::vertex * vertices, const unsigned int n_vertices,
+			audio_t sound_out[],
+			unsigned int sound_n,
+			const unsigned int camera_w,
+			const float delay_distance_at_max_angle
+			);
 private:
 	void RenderDistanceToSound(
 			float x, float y, float z,
@@ -123,8 +139,6 @@ private:
 	float * loudness_data; //! size 2*loudness_n_per_channel, interleaved data
 	float * amplitudes_data; //! size 2*loudness_n_per_channel, interleaved data
 };
-
-
 
 
 #endif /* SRC_SOUNDRENDERER_H_ */

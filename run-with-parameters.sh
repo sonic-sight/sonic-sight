@@ -22,14 +22,15 @@ then
 	# built-in sound card:
 	# pacmd set-default-sink 'alsa_output.0.analog-stereo'
 else
-	cmd="./release_build/render-to-sound --save-depth-to=./data/frame "
+	cmd="./release_build/render-to-sound"
+	# cmd="${cmd} --save-depth-to=./data/frame "
 	# cmd="./release_build/render-to-sound "
 	# cmd="./debug_build/render-to-sound --save-depth-to=./data/frame "
 	# cmd="gdb --args ./debug_build/render-to-sound --save-depth-to=./data/frame "
 fi
 
 # Range is either "INSIDE" or "STREET"
-RANGE="STREET"
+RANGE="INSIDE"
 # Frequency is either "CONSTANT" or "DOUBLING"
 FREQUENCY="CONSTANT"
 
@@ -41,6 +42,7 @@ parameters=(
 "--renderer-lower-frequency=1414.2" \
 "--renderer-lower-amplitude=0.0" \
 "--renderer-interval-extra-time=0.01" \
+"--depth-rendering-mode=simple" \
 )
 # if lower max distance is unset, lower rendering is disabled
 # "--renderer-lower-frequency-doubling-length=20." \
