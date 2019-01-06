@@ -287,7 +287,7 @@ SimpleDepthRenderer::SimpleDepthRenderer(
 #endif
 	 loudness_n_per_channel(this->max_counter)
 {
-	counters = new unsigned int * [num_counters];
+	counters = new unsigned int * [num_counters*2];
 	counters[0] = new unsigned int [num_counters*max_counter*2];
 	for( int i=1; i<num_counters*2; ++i )
 		counters[i] = &counters[0][max_counter*i];
